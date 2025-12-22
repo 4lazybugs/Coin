@@ -1,0 +1,6 @@
+# conda
+python-dotenv
+openai
+
+# pip
+pyupbit
