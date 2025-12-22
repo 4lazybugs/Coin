@@ -1,11 +1,15 @@
-import os
+import os, time
+from datetime import datetime
+import pyupbit
 from dotenv import load_dotenv
 load_dotenv()
 
+COIN_NAME = 'KRW-ETC'
+equity_list = {} 
+
 def ai_trading():
     # 1. 업비트 차트 데이터 가져오기 (30일 일봉)
-    import pyupbit
-    df = pyupbit.get_ohlcv("KRW-ETC", count=30, interval="day")
+    df = pyupbit.get_ohlcv(f"{COIN_NAME}", count=30, interval="day")
 
     # 2. AI에게 데이터 제공하고 판단 받기
     from openai import OpenAI
@@ -42,34 +46,53 @@ def ai_trading():
 
     # 3. AI의 판단에 따라 실제로 자동매매 진행하기
     import json
+    import sys
     result = json.loads(result)
-    import pyupbit
-    access = os.getenv("UPBIT_ACCESS_KEY")
-    secret = os.getenv("UPBIT_SECRET_KEY")
+    access = os.getenv("ACCESS_KEY_UPBIT")
+    secret = os.getenv("SECRET_KEY_UPBIT")
     upbit = pyupbit.Upbit(access, secret)
-
+    
     print("### AI Decision: ", result["decision"].upper(), "###")
     print(f"### Reason: {result['reason']} ###")
 
+    current_price = pyupbit.get_orderbook(ticker=f"{COIN_NAME}")['orderbook_units'][0]["ask_price"] # 코인 시장가 추출
+    
     if result["decision"] == "buy":
         my_krw = upbit.get_balance("KRW")
-        if my_krw*0.9995 > 5000: # 수수료 0.05% -> (100-0.05)/100=0.9995
+        # 우선 매수/매도 시 50%씩 팔기
+        if (my_krw/2)*0.9995 > 5000: # 수수료 0.05% -> (100-0.05)/100=0.9995
             print("### Buy Order Executed ###")
-            print(upbit.buy_market_order("KRW-ETC", my_krw * 0.9995))
+            # my_krw/2만큼 코인 구매
+            print(upbit.buy_market_order(f"{COIN_NAME}", (my_krw/2) * 0.9995)) # 수수료 0.05% -> (100-0.05)/100=0.9995 
         else:
             print("### Buy Order Failed: Insufficient KRW (less than 5000 KRW) ###")
+
     elif result["decision"] == "sell":
-        my_etc = upbit.get_balance("KRW-ETC")
-        current_price = pyupbit.get_orderbook(ticker="KRW-ETC")['orderbook_units'][0]["ask_price"] # 시장가 추출
-        if my_etc*current_price > 5000:
+        my_etc = upbit.get_balance(f"{COIN_NAME}")
+        if (my_etc/2)*current_price > 5000:
             print("### Sell Order Executed ###")
-            print(upbit.sell_market_order("KRW-ETC", my_etc))
+            # my_etc/2만큼 코인 판매
+            print(upbit.sell_market_order(f"{COIN_NAME}", my_etc/2))
         else:
             print("### Sell Order Failed: Insufficient ETC (less than 5000 KRW worth) ###")
+
     elif result["decision"] == "hold":
         print("### Hold Position ###")
-        
-while True:
-    import time
-    time.sleep(4 * 60 * 60)  # 주기: (4시간 = 14400초)
-    ai_trading()
+
+    my_etc = upbit.get_balance(f"{COIN_NAME}")
+    my_krw = upbit.get_balance("KRW")
+    if my_etc is None:
+        equity_now = my_krw 
+    else:
+        equity_now = my_krw + my_etc*current_price 
+
+    now = datetime.now()
+    equity_list[now] = equity_now
+    #breakpoint()
+    profit = equity_list[now]- list(equity_list.items())[0][1]
+    print(f"{now}_profit: {profit}")
+
+if __name__ == "__main__":
+    while True:
+        ai_trading()
+        time.sleep(4 * 60 * 60)  # 주기: (4시간 = 14400초)
