@@ -1,6 +1,11 @@
 # conda
 python-dotenv
 openai
+PyYAML
 
 # pip
 pyupbit
+feedparser # for rss
+bs4 # for rss
+ta # Widely used library for technical indicators: https://github.com/bukosabino/ta?tab=readme-ov-file
+openpyxl
