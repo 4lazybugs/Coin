@@ -11,4 +11,6 @@ ta # Widely used library for technical indicators: https://github.com/bukosabino
 openpyxl
 youtube-transcript-api
 --upgrade ta # library for calculating techinacal index automatically
- 
+selenium
+webdriver-manager
+Pillow
