@@ -11,7 +11,7 @@ equity_list = {}
 
 def ai_trading():
     # 1. 업비트 차트 데이터 가져오기 (30일 일봉)
-    df = pyupbit.get_ohlcv(f"{COIN_NAME}", count=30, interval="day")
+    df = pyupbit.get_ohlcv(COIN_NAME, count=30, interval="day")
 
     # 1-1. 공포 탐욕 지수 가져오기 (Alternative.me)
     fng = get_fear_greed_index(limit=1, date_format="kr")
@@ -51,21 +51,23 @@ def ai_trading():
         messages=[
             {
                 "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": (
-                            "You are an expert in crypto investing.\n"
-                            "Decide whether to buy, sell, or hold based on the provided OHLCV data and sentiment data.\n"
-                            "Use Fear & Greed Index only as a supplementary signal (it may reflect broad market sentiment, not ETC-specific).\n"
-                            "Respond in JSON format only.\n\n"
-                            "Response Example:\n"
-                            "{\"decision\": \"buy\", \"reason\": \"some technical reason\"}\n"
-                            "{\"decision\": \"sell\", \"reason\": \"some technical reason\"}\n"
-                            "{\"decision\": \"hold\", \"reason\": \"some technical reason\"}\n"
-                        )
-                    }
-                ]
+                "content": """You are an expert in Bitcoin investing. Analyze the provided data including technical indicators, market data, recent news headlines, the Fear and Greed Index, YouTube video transcript, and the chart image. Tell me whether to buy, sell, or hold at the moment. Consider the following in your analysis:
+                - Technical indicators and market data
+                - Recent news headlines and their potential impact on Bitcoin price
+                - The Fear and Greed Index and its implications
+                - Overall market sentiment
+                - The patterns and trends visible in the chart image
+                - Insights from the YouTube video transcript
+                
+                Respond with:
+                1. A decision (buy, sell, or hold)
+                2. If the decision is 'buy', provide a percentage (1-100) of available KRW to use for buying.
+                If the decision is 'sell', provide a percentage (1-100) of held BTC to sell.
+                If the decision is 'hold', set the percentage to 0.
+                3. A reason for your decision
+                
+                Ensure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions.
+                Your percentage should reflect the strength of your conviction in the decision based on the analyzed data."""
             },
             {
                 "role": "user",
@@ -77,7 +79,24 @@ def ai_trading():
                 ]
             }
         ],
-        response_format={"type": "json_object"}
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "trading_decision",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "decision": {"type": "string", "enum": ["buy", "sell", "hold"]},
+                        "percentage": {"type": "integer"},
+                        "reason": {"type": "string"}
+                    },
+                    "required": ["decision", "percentage", "reason"],
+                    "additionalProperties": False
+                }
+            }
+        },
+        max_tokens=4095
     )
 
     result = response.choices[0].message.content
@@ -88,31 +107,37 @@ def ai_trading():
     secret = os.getenv("SECRET_KEY_UPBIT")
     upbit = pyupbit.Upbit(access, secret)
 
+    pct = int(result["percentage"])
+    pct = max(0, min(100, pct))  # 안전 클램프
+
     print("### AI Decision: ", result["decision"].upper(), "###")
+    print(f"### Percentage: {pct}% ###")
     print(f"### Reason: {result['reason']} ###")
 
-    current_price = pyupbit.get_orderbook(ticker=f"{COIN_NAME}")['orderbook_units'][0]["ask_price"]
+    current_price = pyupbit.get_orderbook(ticker=COIN_NAME)['orderbook_units'][0]["ask_price"]
 
     if result["decision"] == "buy":
         my_krw = upbit.get_balance("KRW")
-        if (my_krw / 2) * 0.9995 > 5000:
+        spend = my_krw * (pct / 100) * 0.9995  # 수수료 여유
+        if spend > 5000:
             print("### Buy Order Executed ###")
-            print(upbit.buy_market_order(f"{COIN_NAME}", (my_krw / 2) * 0.9995))
+            print(upbit.buy_market_order(COIN_NAME, spend))
         else:
             print("### Buy Order Failed: Insufficient KRW (less than 5000 KRW) ###")
 
     elif result["decision"] == "sell":
-        my_etc = upbit.get_balance(f"{COIN_NAME}")
-        if (my_etc / 2) * current_price > 5000:
+        my_etc = upbit.get_balance(COIN_NAME)
+        sell_qty = my_etc * (pct / 100)
+        if sell_qty * current_price > 5000:
             print("### Sell Order Executed ###")
-            print(upbit.sell_market_order(f"{COIN_NAME}", my_etc / 2))
+            print(upbit.sell_market_order(COIN_NAME, sell_qty))
         else:
             print("### Sell Order Failed: Insufficient ETC (less than 5000 KRW worth) ###")
 
     elif result["decision"] == "hold":
         print("### Hold Position ###")
 
-    my_etc = upbit.get_balance(f"{COIN_NAME}")
+    my_etc = upbit.get_balance(COIN_NAME)
     my_krw = upbit.get_balance("KRW")
     if my_etc is None:
         equity_now = my_krw
