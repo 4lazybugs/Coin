@@ -1,2 +1,6 @@
 ssh-key
 .env
+test.py
+*.db
+__pycache__/*
+data/*
