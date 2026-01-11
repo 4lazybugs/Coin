@@ -175,7 +175,7 @@ if __name__ == "__main__":
         reflection = generate_reflection(recent_trades, {"fear_greed_index": fear_greed_index})
 
         for coin in coin_candidates:
-            df = pyupbit.get_ohlcv(coin, count=10, interval="day")
+            df = pyupbit.get_ohlcv(coin, count=60, interval="minute1")
             if df is None or df.empty:
                 continue
 
