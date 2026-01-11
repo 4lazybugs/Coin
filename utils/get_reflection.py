@@ -5,54 +5,54 @@ import pandas as pd
 from utils.db_utils import DataBase
 
 
-def get_recent_trades(days=7, db_path='bitcoin_trades.db'):
-    # ✅ get_db_connection() 미정의 문제 해결: DataBase 인스턴스 통해 연결
+def get_recent_trades(minutes=20, db_path="bitcoin_trades.db"):
     db = DataBase(db_path=db_path)
     conn = db.get_db_connection(db_path)
 
-    seven_days_ago = (datetime.now() - timedelta(days=days)).isoformat()
+    since = (datetime.now() - timedelta(minutes=minutes)).isoformat()
 
     c = conn.cursor()
     c.execute(
         "SELECT * FROM trades WHERE timestamp > ? ORDER BY timestamp DESC",
-        (seven_days_ago,)
+        (since,),
     )
 
-    columns = [column[0] for column in c.description]
+    columns = [col[0] for col in c.description]
     rows = c.fetchall()
+    conn.close()
 
-    conn.close()  # 여기서 닫아도 됨 (별도 커넥션이므로)
-
-    return pd.DataFrame.from_records(data=rows, columns=columns)
-
+    return pd.DataFrame.from_records(rows, columns=columns)
 
 def calculate_performance(trades_df):
     if trades_df is None or trades_df.empty:
         return 0.0
 
-    # ✅ 컬럼명은 btc_*로 되어 있어도 "코인"으로 해석하면 됨 (ETC도 동일 컬럼에 저장 중)
-    initial_balance = (
-        float(trades_df.iloc[-1]['krw_balance']) +
-        float(trades_df.iloc[-1]['btc_balance']) * float(trades_df.iloc[-1]['btc_krw_price'])
-    )
-    final_balance = (
-        float(trades_df.iloc[0]['krw_balance']) +
-        float(trades_df.iloc[0]['btc_balance']) * float(trades_df.iloc[0]['btc_krw_price'])
+    initial_equity = (
+        float(trades_df.iloc[-1]["krw_balance"]) +
+        float(trades_df.iloc[-1]["asset_balance"]) *
+        float(trades_df.iloc[-1]["asset_krw_price"])
     )
 
-    if initial_balance == 0:
+    final_equity = (
+        float(trades_df.iloc[0]["krw_balance"]) +
+        float(trades_df.iloc[0]["asset_balance"]) *
+        float(trades_df.iloc[0]["asset_krw_price"])
+    )
+
+    if initial_equity == 0:
         return 0.0
 
-    return (final_balance - initial_balance) / initial_balance * 100.0
+    return (final_equity - initial_equity) / initial_equity * 100.0
 
 
-def generate_reflection(trades_df, current_market_data):
+def generate_reflection(trades_df: pd.DataFrame, current_market_data) -> str:
+    """
+    최근 거래 로그 + 현재 시장 데이터 기반으로 LLM 리플렉션 생성.
+    """
     performance = calculate_performance(trades_df)
 
-    # ✅ 위 코드와 동일하게 API 키 사용 (dotenv 로드되어 있으면 환경변수로 들어옴)
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    # ✅ JSON 직렬화 안정화(최소): NaN -> None
     safe_df = trades_df.copy() if trades_df is not None else pd.DataFrame()
     if not safe_df.empty:
         safe_df = safe_df.where(pd.notnull(safe_df), None)
@@ -62,7 +62,10 @@ def generate_reflection(trades_df, current_market_data):
         messages=[
             {
                 "role": "system",
-                "content": "You are an AI trading assistant tasked with analyzing recent trading performance and current market conditions to generate insights and improvements for future trading decisions."
+                "content": (
+                    "You are an AI trading assistant tasked with analyzing recent trading performance "
+                    "and current market conditions to generate insights and improvements for future trading decisions."
+                ),
             },
             {
                 "role": "user",
@@ -73,7 +76,7 @@ Recent trading data:
 Current market data:
 {current_market_data}
 
-Overall performance in the last 7 days: {performance:.2f}%
+Overall performance in the last 20 minutes: {performance:.2f}%
 
 Please analyze this data and provide:
 1. A brief reflection on the recent trading decisions
@@ -82,9 +85,9 @@ Please analyze this data and provide:
 4. Any patterns or trends you notice in the market data
 
 Limit your response to 250 words or less.
-"""
-            }
-        ]
+""",
+            },
+        ],
     )
 
     return response.choices[0].message.content

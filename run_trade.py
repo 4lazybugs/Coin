@@ -164,7 +164,8 @@ if __name__ == "__main__":
 
         if now >= next_scan_at:
             print(f"{now}: Starting liquidity scan...")
-            top_k = top_liquid_coins(k=6, score_days=10, verbose=True)
+            # score_days는 유동성 점수를 매기는 기준 구간
+            top_k = top_liquid_coins(score_days=10, verbose=True)
             row_fn = make_liquidity_row()
             database.log_liquidity_scan(top_k, row_fn)
             coin_candidates = [t for t, _ in top_k] or coin_candidates

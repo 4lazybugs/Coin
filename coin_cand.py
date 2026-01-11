@@ -36,7 +36,7 @@ def filter(df, ticker, verbose=True):
 
     return True
 
-def top_liquid_coins(k=10, score_days=10, verbose=True):
+def top_liquid_coins(score_days=10, verbose=True):
     tickers = pyupbit.get_tickers(fiat="KRW")
     scores, total = [], len(tickers)
 
@@ -54,7 +54,7 @@ def top_liquid_coins(k=10, score_days=10, verbose=True):
         if verbose:
             print(int(score))
 
-    return sorted(scores, key=lambda x: x[1], reverse=True)[:k]
+    return sorted(scores, key=lambda x: x[1], reverse=True)
 
 def make_liquidity_row():
     return lambda ts, t, s: (ts, t, float(s), LISTING_DAYS, PUMP_RATIO, MIN_TURNOVER, MAX_DAILY_RET)
