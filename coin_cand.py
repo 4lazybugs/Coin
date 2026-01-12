@@ -38,6 +38,11 @@ def filter(df, ticker, verbose=True):
 
 def top_liquid_coins(score_days=10, verbose=True):
     tickers = pyupbit.get_tickers(fiat="KRW")
+    
+    # (추가) 스테이블/현금성 티커 제외
+    EXCLUDE = {"KRW-USDT", "KRW-USDC", "KRW-DAI", "KRW-TUSD", "KRW-USDP"}
+    tickers = [t for t in tickers if t not in EXCLUDE]
+    
     scores, total = [], len(tickers)
 
     for i, t in enumerate(tickers, 1):

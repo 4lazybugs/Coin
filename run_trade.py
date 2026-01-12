@@ -139,7 +139,7 @@ def build_model_input(coin, df, fng):
     if isinstance(fng, list): fng = fng[0] if fng else {}
     return {
         "ticker": coin,
-        "ohlcv_30d_daily": json.loads(df.to_json()),
+        "ohlcv_4days": json.loads(df.to_json()),
         "fear_greed_index": {
             "value": fng.get("value"),
             "classification": fng.get("value_classification"),
@@ -176,7 +176,7 @@ if __name__ == "__main__":
         reflection = generate_reflection(recent_trades, {"fear_greed_index": fear_greed_index})
 
         for coin in coin_candidates:
-            df = pyupbit.get_ohlcv(coin, count=60, interval="minute1")
+            df = pyupbit.get_ohlcv(coin, count=200, interval="minute30")
             if df is None or df.empty:
                 continue
 
@@ -195,4 +195,4 @@ if __name__ == "__main__":
                 trade["profit"]
             )
 
-        time.sleep(1 * 60 * 20) # 20 minutes pause before next iteration
+        time.sleep(1 * 60 * 180) # 3hours&30minutes pause before next iteration

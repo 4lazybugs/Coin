@@ -9,7 +9,8 @@ from langchain_core.messages import SystemMessage, HumanMessage
 video_id_01 = "r7tov49OT3Y"
 # https://www.youtube.com/shorts/5CfV4Afi1F4: 코인 단타 매매기법
 video_id_02 = "5CfV4Afi1F4"
-
+# https://www.youtube.com/watch?v=6itriowPhhM: 코인 매매기법 (10만원 -> 9,000만원)
+video_id_03 = "6itriowPhhM"
 
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
