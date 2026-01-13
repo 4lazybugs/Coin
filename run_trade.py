@@ -11,7 +11,9 @@ from coin_cand import top_liquid_coins, make_liquidity_row
 from openai import OpenAI
 
 load_dotenv()
-equity_list = {}
+
+# ✅ profit 계산 안정화: dict 대신 "첫 총자산"만 저장
+equity_first = None
 
 ###################### prompts ######################
 system_prompt = """You are an expert in Bitcoin investing. Analyze the provided data including technical indicators, market data, recent news headlines, the Fear and Greed Index, YouTube video transcript, and the chart image. Tell me whether to buy, sell, or hold at the moment. Consider the following in your analysis:
@@ -45,9 +47,11 @@ output_schema = {
 
 ############### main functions #####################################
 def ai_trading(coin_name, model_input, reflection=None, youtube_transcript=None):
+    global equity_first
+
     ##### call openai api #######################
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY")) # for gpt
-    #client = OpenAI(base_url="http://127.0.0.1:9000/v1")
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))  # for gpt
+    # client = OpenAI(base_url="http://127.0.0.1:9000/v1")
     base_currency = coin_name.split("-")[1]
 
     system_content = (
@@ -58,7 +62,7 @@ def ai_trading(coin_name, model_input, reflection=None, youtube_transcript=None)
 
     response = client.chat.completions.create(
         model="gpt-4.1",
-        #model="stelterlab/Mistral-Small-24B-Instruct-2501-AWQ",
+        # model="stelterlab/Mistral-Small-24B-Instruct-2501-AWQ",
         messages=[
             {"role": "system", "content": system_content},
             {"role": "user", "content": json.dumps(model_input, ensure_ascii=False)}
@@ -82,6 +86,7 @@ def ai_trading(coin_name, model_input, reflection=None, youtube_transcript=None)
     print(f"### Percentage: {percent}% ###")
     print(f"### Reason: {result['reason']} ###")
 
+    # ✅ 현재 티커 가격(해당 코인 트레이딩/로그용)
     current_price = pyupbit.get_orderbook(ticker=coin_name)["orderbook_units"][0]["ask_price"]
     order_executed = False
 
@@ -110,19 +115,77 @@ def ai_trading(coin_name, model_input, reflection=None, youtube_transcript=None)
     else:
         print("### Hold Position ###")
 
+    # ✅ 체결 반영 대기
     time.sleep(1)
-    my_coin_raw, my_krw_raw = upbit.get_balance(base_currency), upbit.get_balance("KRW")
-    coin_balance = float(my_coin_raw) if my_coin_raw else 0.0
-    krw_balance = float(my_krw_raw) if my_krw_raw else 0.0
 
-    balances = upbit.get_balances()
-    coin_avg_buy_price = next((float(b["avg_buy_price"]) for b in balances if b.get("currency") == base_currency), 0.0)
+    # ✅ balances 1회로 통일 (가용+locked, 평균매입가, 총자산 계산에 모두 사용)
+    balances = upbit.get_balances() or []
 
-    equity_now = krw_balance + coin_balance * current_price
+    # ✅ 트레이딩 대상 코인 보유수량(가용+locked) - 로그용
+    base_row = next((b for b in balances if b.get("currency") == base_currency), None)
+    coin_balance = 0.0
+    if base_row:
+        coin_balance = float(base_row.get("balance") or 0.0) + float(base_row.get("locked") or 0.0)
+
+    # ✅ KRW 잔고(가용+locked) - 로그/총자산용
+    krw_row = next((b for b in balances if b.get("currency") == "KRW"), None)
+    if krw_row:
+        krw_balance = float(krw_row.get("balance") or 0.0) + float(krw_row.get("locked") or 0.0)
+    else:
+        krw_balance = float(upbit.get_balance("KRW") or 0.0)
+
+    # ✅ 가격 조회 최적화: 한 번에 current_price들 가져오기 (실패 시 개별 orderbook fallback)
+    tickers = []
+    qty_by_ticker = {}
+    for b in balances:
+        cur = b.get("currency")
+        if not cur or cur == "KRW":
+            continue
+
+        qty = float(b.get("balance") or 0.0) + float(b.get("locked") or 0.0)
+        if qty <= 0:
+            continue
+
+        ticker = f"KRW-{cur}"
+        tickers.append(ticker)
+        qty_by_ticker[ticker] = qty
+
+    prices = {}
+    if tickers:
+        try:
+            prices = pyupbit.get_current_price(tickers) or {}
+        except Exception:
+            prices = {}
+
+    # ✅ 전체 포트폴리오 총자산(KRW 환산)
+    total_equity = krw_balance
+    for ticker, qty in qty_by_ticker.items():
+        price = prices.get(ticker)
+
+        # fallback: get_current_price가 누락/실패한 경우 개별 orderbook로 재시도
+        if price is None:
+            try:
+                price = pyupbit.get_orderbook(ticker=ticker)["orderbook_units"][0]["ask_price"]
+            except Exception:
+                continue  # 가격 못 가져오면 스킵
+
+        total_equity += qty * float(price)
+
+    # ✅ 해당 트레이딩 코인의 평균 매입가(그대로 유지)
+    coin_avg_buy_price = next(
+        (float(b["avg_buy_price"]) for b in balances if b.get("currency") == base_currency),
+        0.0
+    )
+
+    equity_now = total_equity
+
+    # ✅ 첫 총자산 저장(세션 기준 profit)
+    if equity_first is None:
+        equity_first = equity_now
+    profit = equity_now - equity_first
+
     now = datetime.now()
-    equity_list[(now, coin_name)] = equity_now
-    profit = equity_now - list(equity_list.items())[0][1]
-    print(f"{now}_{coin_name}_profit: {profit}")
+    print(f"{now}_profit: {profit}")
 
     return {
         "decision": result["decision"],
@@ -133,13 +196,14 @@ def ai_trading(coin_name, model_input, reflection=None, youtube_transcript=None)
         "coin_balance": coin_balance,
         "krw_balance": krw_balance,
         "coin_avg_buy_price": coin_avg_buy_price,
-        "coin_krw_price": current_price,
-        "equity_now": equity_now,
-        "profit": profit,
+        "coin_krw_price": current_price,   # 트레이딩 코인 현재가
+        "equity_now": equity_now,          # ✅ 포트폴리오 총자산
+        "profit": profit,                  # ✅ 세션 시작 대비 총자산 변화
     }
 
 def build_model_input(coin, df, fng, news_items):
-    if isinstance(fng, list): fng = fng[0] if fng else {}
+    if isinstance(fng, list):
+        fng = fng[0] if fng else {}
     return {
         "ticker": coin,
         "ohlcv_4days": json.loads(df.to_json()),
@@ -149,7 +213,7 @@ def build_model_input(coin, df, fng, news_items):
             "timestamp": fng.get("timestamp"),
             "note": "Fear & Greed Index is a broad crypto market sentiment proxy; use as a secondary signal."
         },
-        "news": news_items or [],   # ✅ 추가
+        "news": news_items or [],
         "data_attribution": {"fear_greed_source": fng.get("source")}
     }
 
@@ -168,13 +232,22 @@ if __name__ == "__main__":
     database = DataBase()
     coin_candidates = ['KRW-BTC']
 
+    # ✅ 시작 시: DB에서 최신 cand 먼저 로드 + 예외처리
+    try:
+        latest = database.get_liq_cand(limit=20)
+        coin_candidates = latest or coin_candidates
+    except Exception as e:
+        print(f"{datetime.now()}: Failed to load candidates from DB: {e}. Use default candidates.")
+
+    # ✅ 시작하자마자 스캔 방지
+    next_scan_at = datetime.now() + SCAN_EVERY
+
     while True:
         now = datetime.now()
 
-        # ✅ 유동성 스캔
+        # ✅ 유동성 스캔(주기 도래 시에만)
         if now >= next_scan_at:
             print(f"{now}: Starting liquidity scan...")
-            # score_days는 유동성 점수를 매기는 기준 구간
             top_k = top_liquid_coins(score_days=10, verbose=True)
             row_fn = make_liquidity_row()
             database.log_liquidity_scan(top_k, row_fn)
@@ -211,6 +284,7 @@ if __name__ == "__main__":
                 trade["decision"],
                 trade["percent"] if trade["order_executed"] else 0,
                 trade["reason"],
+                trade["coin_name"],
                 trade["coin_balance"],
                 trade["krw_balance"],
                 trade["coin_avg_buy_price"],
@@ -219,4 +293,4 @@ if __name__ == "__main__":
                 trade["profit"]
             )
 
-        time.sleep(1 * 60 * 180) # 3hours&30minutes pause before next iteration
+        time.sleep(1 * 60 * 180)  # 3hours pause before next iteration (원 코드 유지)
