@@ -46,7 +46,8 @@ output_schema = {
 ############### main functions #####################################
 def ai_trading(coin_name, model_input, reflection=None, youtube_transcript=None):
     ##### call openai api #######################
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY")) # for gpt
+    #client = OpenAI(base_url="http://127.0.0.1:9000/v1")
     base_currency = coin_name.split("-")[1]
 
     system_content = (
@@ -57,6 +58,7 @@ def ai_trading(coin_name, model_input, reflection=None, youtube_transcript=None)
 
     response = client.chat.completions.create(
         model="gpt-4.1",
+        #model="stelterlab/Mistral-Small-24B-Instruct-2501-AWQ",
         messages=[
             {"role": "system", "content": system_content},
             {"role": "user", "content": json.dumps(model_input, ensure_ascii=False)}

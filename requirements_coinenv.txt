@@ -15,3 +15,5 @@ selenium
 webdriver-manager
 Pillow
 langchain_openai
+-U vllm
+gguf>=0.13.0,<0.18
