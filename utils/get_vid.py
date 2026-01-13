@@ -11,6 +11,8 @@ video_id_01 = "r7tov49OT3Y"
 video_id_02 = "5CfV4Afi1F4"
 # https://www.youtube.com/watch?v=6itriowPhhM: 코인 매매기법 (10만원 -> 9,000만원)
 video_id_03 = "6itriowPhhM"
+# https://www.youtube.com/watch?v=-UJHObtnp5A: 코인 매매기법 (10만원 -> 5,000만원)
+video_id_03 = "-UJHObtnp5A"
 
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
@@ -39,8 +41,8 @@ Rules:
 
 def get_vid_script(video_id: str) -> str:
     ytt_api = YouTubeTranscriptApi()
-    #fetched_transcript = ytt_api.fetch(video_id)
-    fetched_transcript = ytt_api.fetch(video_id, languages=['ko'])
+    fetched_transcript = ytt_api.fetch(video_id)
+    #fetched_transcript = ytt_api.fetch(video_id, languages=['ko'])
 
     # text만 추출해서 하나의 문자열로 결합
     full_text = " ".join([snippet.text for snippet in fetched_transcript])

@@ -1,26 +1,36 @@
 import feedparser
 from bs4 import BeautifulSoup
 
-def clean_html(html):
-    return BeautifulSoup(html, "html.parser").get_text().strip()
+def clean_html(html: str) -> str:
+    return BeautifulSoup(html or "", "html.parser").get_text().strip()
 
-def shorten(text, n=300):
+def shorten(text: str, n: int = 300) -> str:
+    text = text or ""
     return text if len(text) <= n else text[:n] + "..."
 
-feed = feedparser.parse("https://cryptopotato.com/feed/")
+def fetch_rss_news(feed_url: str, limit: int, summary_len: int, content_len: int,):
+    """
+    RSS에서 최신 뉴스들을 가져와 LLM 입력에 적합한 dict 리스트로 반환.
+    - title, summary, content, link, published 필드를 포함
+    """
+    feed = feedparser.parse(feed_url)
 
-for i, e in enumerate(feed.entries, 1):
-    summary = clean_html(e.get("summary", "N/A"))
+    news_items = []
+    entries = getattr(feed, "entries", []) or []
+    for e in entries[:limit]:
+        summary = clean_html(e.get("summary", ""))
+        if "content" in e and e.content:
+            content = clean_html(getattr(e.content[0], "value", ""))
+        else:
+            content = ""
 
-    # content는 보통 리스트 형태
-    if "content" in e:
-        content = clean_html(e.content[0].value)
-    else:
-        content = "N/A"
+        news_items.append({
+            "title": e.get("title", "N/A"),
+            "summary": shorten(summary, summary_len),
+            "content": shorten(content, content_len),
+            "link": e.get("link", "N/A"),
+            "published": e.get("published", "N/A"),
+            "source": feed_url,
+        })
 
-    print(f"[{i:02d}] {e.title}")
-    print(f"     📝 Summary : {shorten(summary, 200)}")
-    print(f"     📄 Content : {shorten(content, 300)}")
-    print(f"     🔗 {e.link}")
-    print(f"     🕒 {e.get('published', 'N/A')}")
-    print("-" * 80)
+    return news_items

@@ -6,6 +6,7 @@ from utils.get_fear import get_fear_greed_index
 from utils.get_reflection import get_recent_trades, generate_reflection
 from utils.get_vid import get_vid_script
 from utils.db_utils import DataBase
+from utils.rss import fetch_rss_news
 from coin_cand import top_liquid_coins, make_liquidity_row
 from openai import OpenAI
 
@@ -135,7 +136,7 @@ def ai_trading(coin_name, model_input, reflection=None, youtube_transcript=None)
         "profit": profit,
     }
 
-def build_model_input(coin, df, fng):
+def build_model_input(coin, df, fng, news_items):
     if isinstance(fng, list): fng = fng[0] if fng else {}
     return {
         "ticker": coin,
@@ -146,15 +147,21 @@ def build_model_input(coin, df, fng):
             "timestamp": fng.get("timestamp"),
             "note": "Fear & Greed Index is a broad crypto market sentiment proxy; use as a secondary signal."
         },
+        "news": news_items or [],   # ✅ 추가
         "data_attribution": {"fear_greed_source": fng.get("source")}
     }
 
 if __name__ == "__main__":
-    video_id = "5CfV4Afi1F4"
+    video_id = "-UJHObtnp5A"
     youtube_transcript = get_vid_script(video_id)
 
     SCAN_EVERY = timedelta(hours=25)
     next_scan_at = datetime.now()
+
+    # ✅ 뉴스 갱신 주기 추가
+    NEWS_EVERY = timedelta(hours=12)
+    next_news_at = datetime.now()
+    cached_news = []
 
     database = DataBase()
     coin_candidates = ['KRW-BTC']
@@ -162,6 +169,7 @@ if __name__ == "__main__":
     while True:
         now = datetime.now()
 
+        # ✅ 유동성 스캔
         if now >= next_scan_at:
             print(f"{now}: Starting liquidity scan...")
             # score_days는 유동성 점수를 매기는 기준 구간
@@ -170,6 +178,20 @@ if __name__ == "__main__":
             database.log_liquidity_scan(top_k, row_fn)
             coin_candidates = [t for t, _ in top_k] or coin_candidates
             next_scan_at = now + SCAN_EVERY
+
+        # ✅ 뉴스 갱신 (캐시)
+        if now >= next_news_at:
+            try:
+                cached_news = fetch_rss_news(
+                    feed_url="https://cryptopotato.com/feed/",
+                    limit=10,
+                    summary_len=200,
+                    content_len=300
+                )
+                print(f"{now}: RSS news updated. items={len(cached_news)}")
+            except Exception as e:
+                print(f"{now}: RSS news fetch failed: {e}")
+            next_news_at = now + NEWS_EVERY
 
         fear_greed_index = get_fear_greed_index(limit=1, date_format="kr")
         recent_trades = get_recent_trades()
@@ -180,7 +202,7 @@ if __name__ == "__main__":
             if df is None or df.empty:
                 continue
 
-            model_input = build_model_input(coin, df, fear_greed_index)
+            model_input = build_model_input(coin, df, fear_greed_index, cached_news)
             trade = ai_trading(coin, model_input, reflection, youtube_transcript)
 
             database.log_trade(
