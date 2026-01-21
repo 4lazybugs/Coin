@@ -96,29 +96,34 @@ class Agent_openai:
 if __name__ == "__main__":
     load_dotenv()
 
-    # === Upbit 로그인 ===
     access = os.getenv("UPBIT_ACCESS_KEY")
     secret = os.getenv("UPBIT_SECRET_KEY")
     if not access or not secret:
         raise RuntimeError("UPBIT_ACCESS_KEY / UPBIT_SECRET_KEY 가 .env에 없습니다.")
 
     upbit = pyupbit.Upbit(access, secret)
-
-    # DRY_RUN: 기본 1(주문 안 보냄). 실거래하려면 DRY_RUN=0
     DRY_RUN = os.getenv("DRY_RUN", "1") == "1"
 
-    # === DB / profit 누적 ===
     database = DataBase()
     equity_first = None
 
-    # === 유동성 스캔 주기 ===
+    # === 유동성 스캔: 최초 1회 즉시 수행 + 이후 25시간 주기 ===
     SCAN_EVERY = timedelta(hours=25)
-    next_scan_at = datetime.now() + SCAN_EVERY  # 시작하자마자 스캔 방지
+    next_scan_at = datetime.min  # 시작하자마자 스캔
 
-    # === 후보 코인 기본값 ===
     coin_candidates = ["KRW-BTC"]
 
     video_id = "-UJHObtnp5A"
+
+    # === 유튜브 스크립트는 1회만 캐싱 ===
+    # (IP block 피하려면 이 1회도 자주 실행하지 말고, 가능하면 파일/DB 캐시 추천)
+    youtube_transcript = ""
+    try:
+        tmp = Util_Funcs.set_params(coin_name="KRW-BTC", video_id=video_id)
+        youtube_transcript = tmp.get_vid_script(video_id)
+    except Exception as e:
+        print("youtube transcript fetch failed -> continue without transcript:", e)
+        youtube_transcript = ""
 
     agent = Agent_openai(
         base_url="http://127.0.0.1:9000/v1",
@@ -127,13 +132,16 @@ if __name__ == "__main__":
         max_tokens=256,
         temperature=0.1,
     )
-    
+
+    KRW_MARKETS = set(pyupbit.get_tickers(fiat="KRW"))
+
     while True:
         now = datetime.now()
 
         # ===== 유동성 후보코인 스캔 =====
         if now >= next_scan_at:
-            top_k = top_liquid_coins(score_days=10, verbose=True)   # [(ticker, score), ...]
+            KRW_MARKETS = set(pyupbit.get_tickers(fiat="KRW"))
+            top_k = top_liquid_coins(score_days=10, verbose=True)  # [(ticker, score), ...]
             row_fn = make_liquidity_row()
             database.log_liquidity_scan(top_k, row_fn)
 
@@ -144,13 +152,14 @@ if __name__ == "__main__":
             base_currency = coin_name.split("-")[1]
 
             # ===== 코인별 util_funcs 재생성 =====
+            # 핵심: get_vid_script를 "캐시 반환"으로 덮어써서 run_all()이 유튜브 재호출 못하게 막음
             util_funcs = Util_Funcs.set_params(
                 coin_name=coin_name,
                 video_id=video_id,
                 rss={"limit": 10, "summary_len": 300, "content_len": 600},
+                get_vid_script=(lambda _vid: youtube_transcript),
             )
 
-            # 데이터 수집
             informs = util_funcs.run_all()
 
             decision = agent.decide(informs)
@@ -171,7 +180,6 @@ if __name__ == "__main__":
             print("### DRY_RUN:", DRY_RUN, "###")
             print("### coin:", coin_name, "###")
 
-            # 현재가
             current_price = float(pyupbit.get_orderbook(ticker=coin_name)["orderbook_units"][0]["ask_price"])
             order_executed = False
 
@@ -179,33 +187,22 @@ if __name__ == "__main__":
             if result["decision"] == "buy":
                 my_krw = float(upbit.get_balance("KRW") or 0.0)
                 spend = my_krw * (percent / 100) * 0.9995
-
                 if spend > 5000:
                     if DRY_RUN:
                         print("### DRY_RUN: buy_market_order not sent ###")
                     else:
-                        print("### Buy Order Executed ###")
                         print(upbit.buy_market_order(coin_name, spend))
                         order_executed = True
-                else:
-                    print("### Buy Skipped: KRW < 5000 ###")
 
             elif result["decision"] == "sell":
                 my_coin = float(upbit.get_balance(base_currency) or 0.0)
                 sell_qty = my_coin * (percent / 100)
-
                 if sell_qty * current_price > 5000:
                     if DRY_RUN:
                         print("### DRY_RUN: sell_market_order not sent ###")
                     else:
-                        print("### Sell Order Executed ###")
                         print(upbit.sell_market_order(coin_name, sell_qty))
                         order_executed = True
-                else:
-                    print("### Sell Skipped: Coin value < 5000 KRW ###")
-
-            else:
-                print("### Hold Position ###")
 
             time.sleep(1)
 
@@ -222,28 +219,26 @@ if __name__ == "__main__":
             if krw_row:
                 krw_balance = float(krw_row.get("balance") or 0.0) + float(krw_row.get("locked") or 0.0)
 
-            tickers = []
-            qty_by_ticker = {}
+            total_equity = krw_balance
+
             for b in balances:
                 cur = b.get("currency")
                 if not cur or cur == "KRW":
                     continue
+
                 qty = float(b.get("balance") or 0.0) + float(b.get("locked") or 0.0)
                 if qty <= 0:
                     continue
+
                 t = f"KRW-{cur}"
-                tickers.append(t)
-                qty_by_ticker[t] = qty
 
-            total_equity = krw_balance
-
-            for t, qty in qty_by_ticker.items():
-                try:
-                    p = pyupbit.get_orderbook(ticker=t)["orderbook_units"][0]["ask_price"]
-                    total_equity += qty * float(p)
-                except Exception:
-                    # 가격 못 가져오는 코인은 그냥 제외
+                # KRW 마켓 없는 코인은 평가 스킵 (Code not found 방지)
+                if t not in KRW_MARKETS:
                     continue
+
+                p = float(pyupbit.get_orderbook(ticker=t)["orderbook_units"][0]["ask_price"])
+                total_equity += qty * p
+
 
             coin_avg_buy_price = next(
                 (float(b.get("avg_buy_price") or 0.0) for b in balances if b.get("currency") == base_currency),
@@ -251,8 +246,6 @@ if __name__ == "__main__":
             )
 
             equity_now = float(total_equity)
-
-            # ===== profit 누적(equity_first) =====
             if equity_first is None:
                 equity_first = equity_now
             profit = equity_now - equity_first
@@ -273,5 +266,4 @@ if __name__ == "__main__":
                 profit,
             )
 
-        # 루프 주기 (원 코드처럼 3시간)
-        time.sleep(1 * 60 * 180)
+        time.sleep(1 * 60 * 30)  # 30 minutes
