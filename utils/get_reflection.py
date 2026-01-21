@@ -4,6 +4,13 @@ from datetime import datetime, timedelta
 import pandas as pd
 from utils.db_utils import DataBase
 
+def trades_df_to_records(trades_df: pd.DataFrame, tail: int = 30) -> list[dict]:
+    if trades_df is None or trades_df.empty:
+        return []
+    safe_df = trades_df.tail(tail).copy()
+    safe_df = safe_df.where(pd.notnull(safe_df), None)  # NaN -> None
+    return safe_df.to_dict(orient="records")
+
 
 def get_recent_trades(minutes=20, db_path="bitcoin_trades.db"):
     db = DataBase(db_path=db_path)

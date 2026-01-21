@@ -5,3 +5,4 @@ test.py
 __pycache__/*
 data/*
 utils/__pycache__/*
+jocoding.py
