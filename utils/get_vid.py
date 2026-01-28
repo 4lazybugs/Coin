@@ -1,27 +1,10 @@
-from youtube_transcript_api import YouTubeTranscriptApi
-from dotenv import load_dotenv
 import os
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage
+import time
+import traceback
+from youtube_transcript_api import YouTubeTranscriptApi
+from openai import OpenAI
 
-
-# https://www.youtube.com/watch?v=r7tov49OT3Y: Watch THESE CRYPTOS In 2026!!
-video_id_01 = "r7tov49OT3Y"
-# https://www.youtube.com/shorts/5CfV4Afi1F4: 코인 단타 매매기법
-video_id_02 = "5CfV4Afi1F4"
-# https://www.youtube.com/watch?v=6itriowPhhM: 코인 매매기법 (10만원 -> 9,000만원)
-video_id_03 = "6itriowPhhM"
-# https://www.youtube.com/watch?v=-UJHObtnp5A: 코인 매매기법 (10만원 -> 5,000만원)
-video_id_03 = "-UJHObtnp5A"
-
-load_dotenv()
-api_key = os.getenv("OPENAI_API_KEY")
-
-client = ChatOpenAI(
-    api_key=api_key,
-    model="gpt-4o",
-    temperature=0.0,
-)
+from .llm_lock import LLM_CALL_LOCK  # ✅ 단일 GPU 직렬화
 
 SYSTEM_PROMPT = """You are an expert prompt engineer for trading systems.
 
@@ -37,21 +20,82 @@ Rules:
 - Output plain text only.
 """
 
+DEFAULT_MODEL = "unsloth/Mistral-Small-24B-Instruct-2501-bnb-4bit"
 
 
-def get_vid_script(video_id: str) -> str:
-    ytt_api = YouTubeTranscriptApi()
-    fetched_transcript = ytt_api.fetch(video_id)
-    #fetched_transcript = ytt_api.fetch(video_id, languages=['ko'])
+def get_vid_script(base_url: str, api_key: str, video_id: str) -> str:
+    model = os.getenv("LOCAL_OPENAI_MODEL_YOUTUBE", DEFAULT_MODEL)
 
-    # text만 추출해서 하나의 문자열로 결합
+    # ✅ youtube는 heavy 작업이라 timeout 별도 권장
+    timeout_s = float(os.getenv("LOCAL_OPENAI_TIMEOUT_YOUTUBE", "180"))
+
+    # ✅ 입력/출력 축소(속도/안정성에 직결)
+    max_chars = int(os.getenv("YOUTUBE_TRANSCRIPT_MAX_CHARS", "8000"))
+    max_out_tokens = int(os.getenv("YOUTUBE_STRATEGY_MAX_TOKENS", "400"))
+
+    # 1) youtube transcript
+    t0 = time.perf_counter()
+    fetched_transcript = YouTubeTranscriptApi().fetch(video_id)
     full_text = " ".join([snippet.text for snippet in fetched_transcript])
-    #print(full_text01)
+    print(f"[TIMING] youtube transcript fetch: {(time.perf_counter()-t0):.3f}s")
+    print("[DEBUG] transcript chars (raw):", len(full_text))
 
-    response = client.invoke([
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=full_text),
-    ])
-    script = response.content
-    
-    return script
+    # 2) 입력 길이 제한
+    if len(full_text) > max_chars:
+        full_text = full_text[:max_chars]
+    print("[DEBUG] transcript chars (clipped):", len(full_text))
+
+    # 3) local LLM client
+    client = OpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        max_retries=0,
+        timeout=timeout_s,
+    )
+
+    # 4) 변환 (락 + 스트리밍)
+    t1 = time.perf_counter()
+    try:
+        with LLM_CALL_LOCK:
+            stream = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": full_text},
+                ],
+                temperature=0.1,
+                max_tokens=max_out_tokens,
+                stream=True,  # ✅ ReadTimeout(첫 바이트 지연) 방지에 매우 유효
+            )
+
+        chunks = []
+        for ev in stream:
+            if not ev.choices:
+                continue
+            delta = ev.choices[0].delta.content
+            if delta:
+                chunks.append(delta)
+
+        return "".join(chunks).strip()
+
+    except Exception as e:
+        # ✅ 실패해도 전체 파이프라인이 죽지 않게: 빈 문자열 반환
+        print("[ERROR] youtube LLM call failed:", repr(e))
+        print(traceback.format_exc())
+        return ""
+
+    finally:
+        print(f"[TIMING] youtube LLM call: {(time.perf_counter()-t1):.3f}s")
+
+
+if __name__ == "__main__":
+    API_KEY = "local-token"
+    BASE_URL = "http://127.0.0.1:9000/v1"
+
+    # 실행 전 권장:
+    # export LOCAL_OPENAI_TIMEOUT_YOUTUBE=180
+    # export YOUTUBE_TRANSCRIPT_MAX_CHARS=8000
+    # export YOUTUBE_STRATEGY_MAX_TOKENS=400
+
+    out = get_vid_script(base_url=BASE_URL, api_key=API_KEY, video_id="F_HVfz_IcgY")
+    print(out)

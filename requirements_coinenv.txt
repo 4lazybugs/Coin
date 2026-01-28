@@ -19,3 +19,5 @@ langchain_openai
 gguf>=0.13.0,<0.18
 streamlit
 plotly
+httpx
+bitsandbytes>=0.46.1

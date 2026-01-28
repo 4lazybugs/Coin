@@ -11,6 +11,5 @@ __all__ = [
     "trades_df_to_records",
     "get_vid_script",
     "fetch_rss_news",
-    "get_price"
-    ""
+    "get_price",
 ]

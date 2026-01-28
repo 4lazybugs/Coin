@@ -8,7 +8,7 @@ def shorten(text: str, n: int = 300) -> str:
     text = text or ""
     return text if len(text) <= n else text[:n] + "..."
 
-def fetch_rss_news(feed_url: str, limit: int, summary_len: int, content_len: int,):
+def fetch_rss_news(feed_url: str, limit: int=10, summary_len: int=300, content_len: int=600,):
     """
     RSS에서 최신 뉴스들을 가져와 LLM 입력에 적합한 dict 리스트로 반환.
     - title, summary, content, link, published 필드를 포함
@@ -34,3 +34,25 @@ def fetch_rss_news(feed_url: str, limit: int, summary_len: int, content_len: int
         })
 
     return news_items
+
+if __name__ == "__main__":
+    FEED_URL = "https://www.cryptobreaking.com/feed/"
+
+    news = fetch_rss_news(
+        feed_url=FEED_URL,
+        limit=10,
+        summary_len=300,
+        content_len=600,
+    )
+
+    print(f"Fetched {len(news)} news items\n")
+
+    for idx, item in enumerate(news, 1):
+        print(f"--- News Item {idx} ---")
+        print(f"Title: {item['title']}")
+        print(f"Published: {item['published']}")
+        print(f"Link: {item['link']}")
+        print(f"Summary: {item['summary']}")
+        print(f"Content: {item['content']}")
+        print()
+

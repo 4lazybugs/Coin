@@ -39,12 +39,6 @@ def get_fear_greed_index(
             "source": "Alternative.me (https://alternative.me) / API: https://api.alternative.me/fng/",
         }
 
-        # ===== 기존 ai_trading()에 있던 출력 로직 이동 =====
-        print(
-            f"[FNG] value={result['value']} ({result['value_classification']}), "
-            f"ts={result['timestamp']} (Source: {result['source']})"
-        )
-
         return result
 
     except Exception as e:
@@ -62,3 +56,6 @@ def get_fear_greed_index(
         print(f"[FNG] (Source: {error_result['source']}) Fetch failed: {error_result['error']}")
 
         return error_result
+
+if __name__ == "__main__":
+    get_fear_greed_index()

@@ -6,3 +6,5 @@ __pycache__/*
 data/*
 utils/__pycache__/*
 jocoding.py
+run_trade.py
+*.log
